@@ -3,13 +3,16 @@ close all;
 clear all;
 
 %% globals params
+
+name_of_saved_filestate = "30dbm250m50kmh.mat";
+
 %inter-site-distance
-isd = 200; %m by default 200m or 250m is fine
+isd = 250; %m by default 200m or 250m is fine
 cell_range_factor = 1.0; %range of cell wrt isd. factor of 1.0 assumes no overlap (best case)
 sinr_map_resolution = 50; %fraction of isd, higher = better res -> CAUTION: computationnaly demanding, default was 20
 
 %transmiter info
-tx_power = 50; %dbm
+tx_power = 30; %dbm
 fq = 4e9; %Hz, carrier frequency, 4ghz is default as defined in the matlab example
 
 %reciever info
@@ -23,7 +26,7 @@ ambient_interference = 0; %dbm -> adjustable, can be used to simulated baseline 
 pathloss_model_type = "FreeSpace"; %refer to https://nl.mathworks.com/help/comm/ref/rfprop.freespace.pathloss.html -> not implemented for now
 
 %moving info
-moving_speed = 100 / 3.6; %speed of vehicle on route, m/s
+moving_speed = 50 / 3.6; %speed of vehicle on route, m/s
 
 %interpolation position subdivision
 %CAUTION: computation time increases rapidly with decreasing length here,
@@ -129,11 +132,11 @@ txs = txsite('Name',cellNames, ...
     'TransmitterPower',txPower);
 
 % Launch Site Viewer
-viewer = siteviewer;
+%viewer = siteviewer;
 
 % Show sites on a map
-show(txs);
-viewer.Basemap = 'topographic';
+%show(txs);
+%viewer.Basemap = 'topographic';
 
 %% ANTENNA INFO 
 % Define pattern parameters
@@ -161,7 +164,7 @@ antennaElement = phased.CustomAntennaElement(...
    
 % Display radiation pattern
 f = figure;
-pattern(antennaElement,fq);
+%pattern(antennaElement,fq);
 
 %% RX 
 % Assign the antenna element for each cell transmitter
@@ -195,7 +198,7 @@ sinrValues = sinr(txs,'freespace', ...
 
 
 
-%% define trajectory
+% define trajectory
 %critical waypoints go here (turns) in lattitude/longitude degree/decimal
 %format
 waypoints = [55.859444, -4.233611; 55.860833, -4.245278; 55.861389, -4.25; 55.864444, -4.248889; 55.865278, -4.256944; 55.860833, -4.258333;  55.861389,  -4.263056; 55.864444, -4.261944;  55.865278, -4.270278; 55.867222, -4.271111; 55.869444,-4.267778; 55.871389, -4.27 ;55.874722, -4.279444]
@@ -208,7 +211,7 @@ for k = 1:1:length(waypoints)
     longs(k) = waypoints(k, 2);
 end
 
-h = geoplot(lats, longs);
+%h = geoplot(lats, longs);
 
 %distance between each point specified in waypoint using great circle
 %method (used later for speed calc)
@@ -257,7 +260,7 @@ for k = 1:1:length(waypoints) -1
     interpolated_lats = [interpolated_lats; lat2];
 end
 
-geoplot(interpolated_lats, interpolated_longs, lats, longs, 'p');
+%geoplot(interpolated_lats, interpolated_longs, lats, longs, 'p');
 
 
 %% Driving trajectory and SINR MAPPING
@@ -336,7 +339,7 @@ end
 %plot(d_vec, SINR_at_waypoint)
 %plot(d_run, angle_wrt_cell_at_waypoint)
 %plot(d_vec, radial_velocity_wrt_cell)
-geoplot(interpolated_lats, interpolated_longs, lats, longs, 'p') %plot trajectory
+%geoplot(interpolated_lats, interpolated_longs, lats, longs, 'p') %plot trajectory
 
 %% mapping SINR to code rate and modualtion format
 
@@ -351,13 +354,13 @@ geoplot(interpolated_lats, interpolated_longs, lats, longs, 'p') %plot trajector
 % note on modulation: BPSK = 2; QPSK = 4, 16QAM = 16; 64QAM = 64
 %threshold SINR
 SINR_thresholds_BLER01 = [-6.5, -4.0, -2.6, -1.0, 1.0, 3.0, 6.6, 10.0, 11.4,11.8, 13.0, 13.8, 15.6, 16.8, 17.6];
-SINR_thresholds_BLER01 = SINR_thresholds_BLER01 -30; %convert to dBm (sinr map)
+SINR_thresholds_BLER01 = SINR_thresholds_BLER01 -30; %convert to same scale as (sinr map)
 SINR_thresholds_BLER0001 = SINR_thresholds_BLER01 + 4;
 
 %CODING RATES FOR EACH THRESHOLD, 
 CR_thresholds = [1/12, 1/9, 1/6, 1/3, 1/2, 3/5, 1/3, 1/2, 3/5, 1/2, 1/2, 3/5, 3/4, 5/6, 11/12 ];
 
-%efficiency (bits/symb) for each threshold
+%spectral efficiency (bits/symb) for each threshold
 EFF_thresholds =  [0.15, 0.23, 0.38, 0.6, 0.88, 1.18, 1.48, 1.91, 2.41, 2.73, 3.32, 3.9, 4.52, 5.12, 5.55];
 %Modualtion type at each threshold
 MOD_thresholds = [4,4,4,4,4,16,16,16,64,64,64,64,64,64];
@@ -441,13 +444,13 @@ for i = 1:1:numel(interpolated_longs)
     radial_v = radial_velocity_wrt_cell(i);
    
     for j = 1:1:numel(subcarrier_frequencies)
-        doppler_coef = (c + radial_velocity_wrt_cell)/(c);
+        doppler_coef = (c + radial_v)/(c);
         lambda_subc = c/subcarrier_frequencies(j);
         shift = (2*pi*radial_v*symbol_duration)/lambda_subc; %NOTE: this is phase shift over symbol duration as defined above (eq. to average symbol phase shift)
         %note: shift is in radians
         subcarrier_shifts(i,j) = shift;
         %also compute frequency offset
-        subcarrier_doppler(i,j) = doppler_coef(1)*  subcarrier_frequencies(j);
+        subcarrier_doppler(i,j) = doppler_coef(1) *  subcarrier_frequencies(j);
     end
 end
 
@@ -463,7 +466,7 @@ pfo = comm.PhaseFrequencyOffset(PhaseOffset=10, FrequencyOffset=1000);
 QAM_shifted = pfo(QAM64_cd_ref)
 
 %scatterplot(QAM64_cd_ref)
-scatterplot(QAM_shifted)
+%scatterplot(QAM_shifted)
 
 
 %% modulate baseband signal and plot  both original and phase+freq offset constellation diagram
@@ -579,7 +582,7 @@ for i = 1:1:numel(interpolated_longs)
 end    
 save("lastrun.mat"); %saving machine state upon completion as this step is quite long and loaded ram data is easy to accidentally modify without meaning to
 %you should be thanking me i am saving you hours of your time perhaps 
-%% compute average BER for static and moving cases at each waypoint
+% compute average BER for static and moving cases at each waypoint
 %Symbol error rates
 %static_error_rate = mean(unshifed_pairwise_prob, 2);
 moving_error_rate = mean(shifted_pairwise_error_prob, 2);
@@ -646,7 +649,7 @@ end
 
 %save("run3.mat")
 
-%%
+%
 %difference between static an dmoving
 delta_static_phase = datarates_eff_static - datarates_eff_moving;
 
@@ -662,12 +665,12 @@ phase_frac = area_datarate_phase /area_datarate_static
 delta_frac = area_delta/area_datarate_static
 
 
-
+save(name_of_saved_filestate);
 
 %% plots
 
 
-%plot(d_run,datarates_eff_static);%, d_run, datarates_eff_moving);%, d_run, datarates_eff_moving_freq )
+plot(d_run,datarates_eff_static, d_run, datarates_eff_moving);%, d_run, datarates_eff_moving_freq )
 %plot(d_run,datarates_eff_static);%,d_run, delta_static_phase)
 %plot(d_run,datarates_eff_static, d_run, datarates_eff_moving)
-plot(d_run, datarates_eff_static)
+%plot(d_run, datarates_eff_static)
