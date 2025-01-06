@@ -4,7 +4,7 @@ clear all;
 
 %% globals params
 
-name_of_saved_filestate = "30dbm250m50kmh.mat";
+name_of_saved_filestate = "10dbm250m100kmh-70dbmInt.mat";
 
 %inter-site-distance
 isd = 250; %m by default 200m or 250m is fine
@@ -12,26 +12,26 @@ cell_range_factor = 1.0; %range of cell wrt isd. factor of 1.0 assumes no overla
 sinr_map_resolution = 50; %fraction of isd, higher = better res -> CAUTION: computationnaly demanding, default was 20
 
 %transmiter info
-tx_power = 30; %dbm
+tx_power = 10; %dbm
 fq = 4e9; %Hz, carrier frequency, 4ghz is default as defined in the matlab example
 
 %reciever info
-guardband_size = 905e3  %see http://howltestuffworks.blogspot.com/2019/11/5g-nr-resource-blocks.html or TR 38.101 -> each set ressource blocks has preset gardbands on each side depending on bw and subcarrier spacing
+guardband_size = 905e3;  %see http://howltestuffworks.blogspot.com/2019/11/5g-nr-resource-blocks.html or TR 38.101 -> each set ressource blocks has preset gardbands on each side depending on bw and subcarrier spacing
 rx_bw = 40e6; %reciever bandwidth, Hz
 rx_bw = rx_bw - 2*guardband_size;  %remove useless/guardband from each side of bandwidth
 
 rx_noiseF = 7; %dbm, noise figure of reciever-> RX antenna gain is defined lowerin RX section at 0db (unity gain)
 
-ambient_interference = 0; %dbm -> adjustable, can be used to simulated baseline network load through interference
+ambient_interference = -70; %dbm -> adjustable, can be used to simulated baseline network load through interference SHOULD BE MUCH LOWER THAN TX POWER
 pathloss_model_type = "FreeSpace"; %refer to https://nl.mathworks.com/help/comm/ref/rfprop.freespace.pathloss.html -> not implemented for now
 
 %moving info
-moving_speed = 50 / 3.6; %speed of vehicle on route, m/s
+moving_speed = 100 / 3.6; %speed of vehicle on route, m/s
 
 %interpolation position subdivision
 %CAUTION: computation time increases rapidly with decreasing length here,
 %1-5m is generally good
-position_subdivide_length = 5; %m -> trajectory is divided into simulated steps spaced this far apart
+position_subdivide_length = 2; %m -> trajectory is divided into simulated steps spaced this far apart
 
 
 %symbol info
@@ -45,7 +45,7 @@ symbol_rate =  1/ symbol_period;
 modulation_order = 1; % width of subcarrier = 2^MO * 15khz -> MO 0-2 for <6ghz, 2-5 for mmwave, see https://www.keysight.com/us/en/assets/9921-03326/training-materials/Understanding-the-5G-NR-Physical-Layer.pdf 
 
 %additionnal params
-spectral_eff_type = 0; %if 0, uses 90% BLER, 99.9% if 1 ->currently not implemented, 0.1% is used
+spectral_eff_type = 0; %if 0, uses 90% BLER, 99.9% if 1 ->currently not implemented, 0.1 is used
 
 
 %% CELL INFORMATION 
@@ -175,7 +175,8 @@ end
 % Define receiver parameters using Table 8-2 (b) of Report ITU-R M.[IMT-2020.EVAL] 
 bw = rx_bw; % 20 MHz bandwidth
 rxNoiseFigure = rx_noiseF; % 7 dB in spec
-rxNoisePower = -174 + 10*log10(bw) + rxNoiseFigure;
+rxNoisePower = -174 + 10*log10(bw) + rxNoiseFigure
+rxNoisePowerInterference = sum_dbm_power(rxNoisePower, ambient_interference)
 rxGain = 0; % dBi
 rxAntennaHeight = 1.5; % m
 
@@ -190,6 +191,7 @@ sinrValues = sinr(txs,'freespace', ...
     'MaxRange',cell_range_factor*isd, ...
     'Resolution',isd/sinr_map_resolution);
 
+datalength = length(sinrValues.Data)
 %uncomment if want to display SINR map. Takes time!
 
 %sinr(txs,'freespace', 'ReceiverGain',rxGain, 'ReceiverAntennaHeight',rxAntennaHeight, 'ReceiverNoisePower',rxNoisePower, ...    
@@ -354,7 +356,7 @@ end
 % note on modulation: BPSK = 2; QPSK = 4, 16QAM = 16; 64QAM = 64
 %threshold SINR
 SINR_thresholds_BLER01 = [-6.5, -4.0, -2.6, -1.0, 1.0, 3.0, 6.6, 10.0, 11.4,11.8, 13.0, 13.8, 15.6, 16.8, 17.6];
-SINR_thresholds_BLER01 = SINR_thresholds_BLER01 -30; %convert to same scale as (sinr map)
+SINR_thresholds_BLER01 = SINR_thresholds_BLER01; %convert to same scale as (sinr map)
 SINR_thresholds_BLER0001 = SINR_thresholds_BLER01 + 4;
 
 %CODING RATES FOR EACH THRESHOLD, 
@@ -472,7 +474,13 @@ QAM_shifted = pfo(QAM64_cd_ref)
 %% modulate baseband signal and plot  both original and phase+freq offset constellation diagram
 %tgermal noise goes here
 noise_ref_db = -204 + rxNoiseFigure; %N0 in dB
-noise_ref = 10^(noise_ref_db/10);
+noise_ref = 10^(noise_ref_db/10); %convert to watts
+interference_spectral_density = ambient_interference - 10*log10(bw); %spectral density of ambient interference
+
+noise_interference_ref_db = sum_dbm_power(interference_spectral_density,noise_ref_db +30) - 30; % (dbm) assumes noise follows gaussian and can be imposed onto noise
+noise_interference_ref = 10^(noise_interference_ref_db/10); %convert to watts
+
+
 
 
 unshifed_pairwise_prob = ones(1,numel(interpolated_longs));
@@ -514,7 +522,7 @@ for i = 1:1:numel(interpolated_longs)
     if mod01 ~= 0
         %first find bit energy as (signal power * bits_per_symbol) /  
         datarate_lin = symbol_rate * log2(mod01); %datarate in bits = symbol rates * bits per symbol
-        signal_power = SINR_at_waypoint(i) + (rxNoisePower + ambient_interference); %S/N => S_db - N_db -> in dbm here
+        signal_power = SINR_at_waypoint(i) + (sum_dbm_power(rxNoisePower, ambient_interference)); %S/NI => S_db - NI_db -> in dbm here
         energy_per_bit = signal_power- 30 - 10*log10(datarate_lin); %energy per bit in db
         energy_per_bit = 10^(energy_per_bit/10); %convert to joules
         symbol_energy = compute_energy_per_symbol(energy_per_bit, mod01); %commpute ES
@@ -533,7 +541,7 @@ for i = 1:1:numel(interpolated_longs)
 
     
         %SER and BER computations for static case
-        prob = prob_overreach(d_mins, noise_ref); %probability that any symbol is mistaken for another 
+        prob = prob_overreach(d_mins, noise_interference_ref); %probability that any symbol is mistaken for another 
         unshifed_pairwise_prob(i)= prob;
         BER_static_prob(i) = unshifed_pairwise_prob(i) / log2(mod01); %assumption: snr is sufficiently high
 
@@ -555,12 +563,12 @@ for i = 1:1:numel(interpolated_longs)
             %for each case, find odds that symbols in shifted constellation
             %would be misread as something else
             [similarity_mtx, closeidx] = find_smallest_distance_dual(unshifted_mod, shifted_mod);
-            [prob_mismatch, prob_match] = prob_overreach_shift(similarity_mtx, noise_ref);
+            [prob_mismatch, prob_match] = prob_overreach_shift(similarity_mtx, noise_interference_ref);
             %numel(prob_mismatch)
             shifted_pairwise_error_prob(i,j) = prob_mismatch; %-> THIS PROBABILITY IS 1 - E SYMBOL ERROR RATE
 
             [similarity_mtx_f, closeidx_f] = find_smallest_distance_dual(unshifted_mod, shifted_freq_mod);
-            [prob_mismatch_f, prob_match_f] = prob_overreach_shift(similarity_mtx_f, noise_ref);
+            [prob_mismatch_f, prob_match_f] = prob_overreach_shift(similarity_mtx_f, noise_interference_ref);
             shifted_pairwise_error_prob_freq(i,j) = prob_mismatch_f;  %-> THIS PROBABILITY IS  SYMBOL ERROR RATE
             
             %now compute BER
@@ -599,8 +607,8 @@ shift_ber = mean(BER_shift_prob, 2);
 %we have an SNIR map. S = SNIR * (N + I)
 
 interference_power = ambient_interference; %dbm
-NI = rxNoisePower + interference_power ; %DBm 
 
+NI = sum_dbm_power(interference_power, rxNoisePower); %dbm
 
 signalPower_at_waypoints = SINR_at_waypoint + NI;
 bits_per_symbol = zeros(1, numel(interpolated_longs));
