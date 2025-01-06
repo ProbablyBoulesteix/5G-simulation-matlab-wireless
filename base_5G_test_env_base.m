@@ -4,7 +4,7 @@ clear all;
 
 %% globals params
 
-name_of_saved_filestate = "10dbm250m100kmh-70dbmInt.mat";
+name_of_saved_filestate = "10dbm250m200kmh-70dbmInt.mat";
 
 %inter-site-distance
 isd = 250; %m by default 200m or 250m is fine
@@ -26,7 +26,7 @@ ambient_interference = -70; %dbm -> adjustable, can be used to simulated baselin
 pathloss_model_type = "FreeSpace"; %refer to https://nl.mathworks.com/help/comm/ref/rfprop.freespace.pathloss.html -> not implemented for now
 
 %moving info
-moving_speed = 100 / 3.6; %speed of vehicle on route, m/s
+moving_speed = 200 / 3.6; %speed of vehicle on route, m/s
 
 %interpolation position subdivision
 %CAUTION: computation time increases rapidly with decreasing length here,
@@ -191,7 +191,8 @@ sinrValues = sinr(txs,'freespace', ...
     'MaxRange',cell_range_factor*isd, ...
     'Resolution',isd/sinr_map_resolution);
 
-datalength = length(sinrValues.Data)
+datalength = height(sinrValues.Data)
+
 %uncomment if want to display SINR map. Takes time!
 
 %sinr(txs,'freespace', 'ReceiverGain',rxGain, 'ReceiverAntennaHeight',rxAntennaHeight, 'ReceiverNoisePower',rxNoisePower, ...    
