@@ -1,7 +1,9 @@
 f_0 = 2.4 * 10^9;   % Base frequency (Hz)
-v = 10;            % Vehicle speed relative to base station (m/s)   
+v = 100;            % Vehicle speed relative to base station (m/s)   
 x_val = -50:1:50;
 f_x=zeros(1,length(x_val));
+
+in_sim=Simulink.SimulationInput("wifi_1");
 f_x(x_val<0)=-v;
 f_x(x_val>0)=v;
 shift=zeros(1,length(f_x));
@@ -9,16 +11,18 @@ for i = 1:length(f_x)
     dopp(i)=doppler_delta(f_x(i),f_0);
     shift(i)=phase_shift(1/f_0,f_x(i),f_0);
 end
-max(shift)-min(shift) %TODO calculate by hand if we're supposed to have such small results, if yes : we're fucked
-close all
-figure(1);
-subplot(2,1,1);
-plot(x_val,dopp);
-ylabel('Doppler shift');
-subplot(2,1,2);
-plot(x_val,shift);
-ylabel('Phase shift');
+%close all
+%figure(1);
+%subplot(2,1,1);
+%plot(x_val,dopp);
+%ylabel('Doppler shift');
+%subplot(2,1,2);
+%plot(x_val,shift);
+%ylabel('Phase shift');
 
+in_sim=in_sim.setVariable('shift',shift);
+out = sim(in_sim);
+out.yout.get('ErrorVec').Values.Data(1000,:)
 % Calculate Doppler shift delta in Hz given relative speed and base frequency
 function delta_f = doppler_delta(v_relative, f_0)
     c = physconst('LightSpeed'); % Speed of light (m/s)
