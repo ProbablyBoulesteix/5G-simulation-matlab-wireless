@@ -1,11 +1,13 @@
 f_0 = 2.4 * 10^9;   % Base frequency (Hz)
 v = 5:5:50;            % Vehicle speed relative to base station (m/s)   
 x_val = -50:1:50;   %set up path for computation of doppler shift along it
+symbol_rate = 250e3;
 f_x=zeros(1,length(x_val));
 in_sim=Simulink.SimulationInput("wifi_1");
 close all;
 shift=zeros(1,length(f_x));
 res_rms=zeros(1,length(v));
+res_dataRate=zeros(1,length(v));
 for j = 1:length(v) %iterate the test with different speed
     f_x(x_val<0)=v(j); %relative speed along the path
     f_x(x_val>0)=-(j);
@@ -19,12 +21,20 @@ for j = 1:length(v) %iterate the test with different speed
     out = sim(in_sim); %run simulink sim with the previously calculated phase shift
     SER = out.yout.get('ErrorVec').Values.Data(:,1); %get SER data from the sim
     res_rms(j)=rms(SER); %calculate RMS of SER for each speed
+    res_dataRate(j)=symbol_rate*6*res_rms(j);% data rate in bits = symbol rate*number of bit per symbol * SER
 end
+figure(1)
+subplot(2,1,1);
 plot(v,res_rms,'ro');
 ylabel("SER");
 xlabel("Speed (m/s)");
-yline(mean(res_rms));
-legend("RMS SER","Mean value")
+title("RMS SER over the path at different speed");
+subplot(2,1,2);
+plot(v,res_dataRate,'bo');
+ylabel("Data rate (Mbit/s)");
+xlabel("Speed (m/s)")
+title("Mean data rate over the path at different speed");
+
 %uncomment this part for a look at phase shift along the path
 %close all
 %figure(1);
