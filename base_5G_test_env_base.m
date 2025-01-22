@@ -1,37 +1,39 @@
 %NOTE: based on https://nl.mathworks.com/help/phased/ug/sinr-map-for-a-5g-urban-micro-cell-test-environment.html
 close all;
-clear all;
+clear;
+maxNumCompThreads("automatic"); %set as desired depending on cpu available, or set as "automatic"
 
 %% globals params
 
-name_of_saved_filestate = "10dbm250m200kmh-70dbmInt.mat";
+name_of_saved_filestate = "run_10dbm500m160kmh-80dbmInt.mat";
+
 
 %inter-site-distance
-isd = 250; %m by default 200m or 250m is fine
+isd = 500; %m by default 200m or 250m is fine
 cell_range_factor = 1.0; %range of cell wrt isd. factor of 1.0 assumes no overlap (best case)
-sinr_map_resolution = 50; %fraction of isd, higher = better res -> CAUTION: computationnaly demanding, default was 20
+sinr_map_resolution = 30; %fraction of isd, higher = better res -> CAUTION: computationnaly demanding, default was 20
 
 %transmiter info
 tx_power = 10; %dbm
 fq = 4e9; %Hz, carrier frequency, 4ghz is default as defined in the matlab example
 
 %reciever info
-guardband_size = 905e3;  %see http://howltestuffworks.blogspot.com/2019/11/5g-nr-resource-blocks.html or TR 38.101 -> each set ressource blocks has preset gardbands on each side depending on bw and subcarrier spacing
+guardband_size = 900e3;  %see http://howltestuffworks.blogspot.com/2019/11/5g-nr-resource-blocks.html or TR 38.101 -> each set ressource blocks has preset gardbands on each side depending on bw and subcarrier spacing
 rx_bw = 40e6; %reciever bandwidth, Hz
 rx_bw = rx_bw - 2*guardband_size;  %remove useless/guardband from each side of bandwidth
 
 rx_noiseF = 7; %dbm, noise figure of reciever-> RX antenna gain is defined lowerin RX section at 0db (unity gain)
 
-ambient_interference = -70; %dbm -> adjustable, can be used to simulated baseline network load through interference SHOULD BE MUCH LOWER THAN TX POWER
-pathloss_model_type = "FreeSpace"; %refer to https://nl.mathworks.com/help/comm/ref/rfprop.freespace.pathloss.html -> not implemented for now
+ambient_interference = -80; %dbm -> adjustable, can be used to simulated baseline network load through interference SHOULD BE MUCH LOWER THAN TX POWER
+%pathloss_model_type = "longley-rice"; %refer to https://nl.mathworks.com/help/comm/ref/rfprop.freespace.pathloss.html -> not implemented for now
 
 %moving info
-moving_speed = 200 / 3.6; %speed of vehicle on route, m/s
+moving_speed = 160 / 3.6; %speed of vehicle on route, m/s
 
 %interpolation position subdivision
 %CAUTION: computation time increases rapidly with decreasing length here,
 %1-5m is generally good
-position_subdivide_length = 2; %m -> trajectory is divided into simulated steps spaced this far apart
+position_subdivide_length = 5; %m -> trajectory is divided into simulated steps spaced this far apart
 
 
 %symbol info
@@ -42,7 +44,7 @@ symbol_period = slot_period / symbols_per_slot;
 symbol_rate =  1/ symbol_period;
 
 %modulator params
-modulation_order = 1; % width of subcarrier = 2^MO * 15khz -> MO 0-2 for <6ghz, 2-5 for mmwave, see https://www.keysight.com/us/en/assets/9921-03326/training-materials/Understanding-the-5G-NR-Physical-Layer.pdf 
+modulation_order = 2; % width of subcarrier = 2^MO * 15khz -> MO 0-2 for <6ghz, 2-5 for mmwave, see https://www.keysight.com/us/en/assets/9921-03326/training-materials/Understanding-the-5G-NR-Physical-Layer.pdf 
 
 %additionnal params
 spectral_eff_type = 0; %if 0, uses 90% BLER, 99.9% if 1 ->currently not implemented, 0.1 is used
@@ -67,7 +69,6 @@ layer_counts = zeros(1);
 
 
 % Define distance and angle for inner ring of 6 sites (cells 4-21)
-%isd = 600; % Inter-site distance
 
 siteDistances(2:7) = isd;
 siteAngles(2:7) = 30:60:360;
@@ -95,6 +96,7 @@ cellLats = zeros(1,numCells);
 cellLons = zeros(1,numCells);
 cellNames = strings(1,numCells);
 cellAngles = zeros(1,numCells);
+
 
 % Define cell sector angles
 cellSectorAngles = [30 150 270];
@@ -164,7 +166,7 @@ antennaElement = phased.CustomAntennaElement(...
    
 % Display radiation pattern
 f = figure;
-%pattern(antennaElement,fq);
+pattern(antennaElement,fq);
 
 %% RX 
 % Assign the antenna element for each cell transmitter
@@ -196,15 +198,70 @@ datalength = height(sinrValues.Data)
 %uncomment if want to display SINR map. Takes time!
 
 %sinr(txs,'freespace', 'ReceiverGain',rxGain, 'ReceiverAntennaHeight',rxAntennaHeight, 'ReceiverNoisePower',rxNoisePower, ...    
- %   'MaxRange',cell_range_factor*isd, ...
-  %  'Resolution',isd/sinr_map_resolution)
+%    'MaxRange',cell_range_factor*isd, ...
+%    'Resolution',isd/sinr_map_resolution)
+%% now define MIMO
+% Define array size
+nrow = 8;
+ncol = 8;
+
+% Define element spacing
+lambda = physconst('lightspeed')/fq;
+drow = lambda/2;
+dcol = lambda/2;
+
+% Define taper to reduce sidelobes 
+dBdown = 30;
+taperz = chebwin(nrow,dBdown);
+tapery = chebwin(ncol,dBdown);
+tap = taperz*tapery.'; % Multiply vector tapers to get 8-by-8 taper values
+
+% Create 8-by-8 antenna array
+cellAntenna = phased.URA('Size',[nrow ncol], ...
+    'Element',antennaElement, ...
+    'ElementSpacing',[drow dcol], ...
+    'Taper',tap, ...
+    'ArrayNormal','x');
+    
+% Display radiation pattern
+f = figure;
+pattern(cellAntenna,fq);
+% Assign the antenna array for each cell transmitter, and apply downtilt.
+% Without downtilt, pattern is too narrow for transmitter vicinity.
+downtilt = 15;
+for tx = txs
+    tx.Antenna = cellAntenna;
+    tx.AntennaAngle = [tx.AntennaAngle; -downtilt];
+end
+
+% Display SINR map
+if isvalid(f)
+    close(f)
+end
+sinrValues = sinr(txs,'freespace', ...
+    'ReceiverGain',rxGain, ...
+    'ReceiverAntennaHeight',rxAntennaHeight, ...
+    'ReceiverNoisePower',rxNoisePower, ...    
+    'MaxRange',cell_range_factor*isd, ...
+    'Resolution',isd/sinr_map_resolution)
+
+%uncomment if want display
+% sinr(txs,'freespace', ...
+%     'ReceiverGain',rxGain, ...
+%     'ReceiverAntennaHeight',rxAntennaHeight, ...
+%     'ReceiverNoisePower',rxNoisePower, ...    
+%     'MaxRange',cell_range_factor*isd, ...
+%     'Resolution',isd/sinr_map_resolution)
+
+datalength = height(sinrValues.Data)
 
 
+%%
 
 % define trajectory
 %critical waypoints go here (turns) in lattitude/longitude degree/decimal
 %format
-waypoints = [55.859444, -4.233611; 55.860833, -4.245278; 55.861389, -4.25; 55.864444, -4.248889; 55.865278, -4.256944; 55.860833, -4.258333;  55.861389,  -4.263056; 55.864444, -4.261944;  55.865278, -4.270278; 55.867222, -4.271111; 55.869444,-4.267778; 55.871389, -4.27 ;55.874722, -4.279444]
+waypoints = [55.859444, -4.233611; 55.860833, -4.245278; 55.861389, -4.25; 55.864444, -4.248889; 55.865278, -4.256944; 55.860833, -4.258333;  55.861389,  -4.263056; 55.864444, -4.261944;  55.865278, -4.270278; 55.867222, -4.271111; 55.869444,-4.267778];%; 55.871389, -4.27 ;55.874722, -4.279444]
 
 lats = zeros(1, length(waypoints));
 longs = zeros(1, length(waypoints));
@@ -263,7 +320,7 @@ for k = 1:1:length(waypoints) -1
     interpolated_lats = [interpolated_lats; lat2];
 end
 
-%geoplot(interpolated_lats, interpolated_longs, lats, longs, 'p');
+geoplot(interpolated_lats, interpolated_longs, lats, longs, 'p');
 
 
 %% Driving trajectory and SINR MAPPING
@@ -357,8 +414,16 @@ end
 % note on modulation: BPSK = 2; QPSK = 4, 16QAM = 16; 64QAM = 64
 %threshold SINR
 SINR_thresholds_BLER01 = [-6.5, -4.0, -2.6, -1.0, 1.0, 3.0, 6.6, 10.0, 11.4,11.8, 13.0, 13.8, 15.6, 16.8, 17.6];
-SINR_thresholds_BLER01 = SINR_thresholds_BLER01; %convert to same scale as (sinr map)
 SINR_thresholds_BLER0001 = SINR_thresholds_BLER01 + 4;
+
+%secon threshold table from
+%%https://www.telecomhall.net/uploads/db2683/original/3X/c/f/cfb9dee6c3ae343cd13b9f480a24d36ec662c4f6.jpeg
+%%(unsourced)
+SINR_thresholds_beta = [-6.7, -4.7,-2.3,0.2,2.4,4.3,5.9,7.2,8.7,10.3,11.7,13.1,14.3,15.8,17.3,18.7,20.0,21.4,24.0,25.3,26.5,27.6,28.7,29.8,30.9,13.9,32.9,33.9];
+
+MOD_thresholds_beta = [4,4,4,4,4,4,4,16,16,16,16,16,64,64,64,64,64,256,256,256,256,256,256,256,256,256,256,256,256];
+CR_thresholds_beta = [0,1172,0.1885,0.3008,0.4385,0.5879,0.7402,0.8809,0.332,0.4385,0.5537,0.667,0.7539,0.6016,0.7402,0.8477,0.9258,0.9639,0.7734,0.8701,0.916,0.9482,0.96,0.978,0.9834,0.9869,0.9899,0.9935,0.997,0.9989];
+
 
 %CODING RATES FOR EACH THRESHOLD, 
 CR_thresholds = [1/12, 1/9, 1/6, 1/3, 1/2, 3/5, 1/3, 1/2, 3/5, 1/2, 1/2, 3/5, 3/4, 5/6, 11/12 ];
@@ -367,6 +432,14 @@ CR_thresholds = [1/12, 1/9, 1/6, 1/3, 1/2, 3/5, 1/3, 1/2, 3/5, 1/2, 1/2, 3/5, 3/
 EFF_thresholds =  [0.15, 0.23, 0.38, 0.6, 0.88, 1.18, 1.48, 1.91, 2.41, 2.73, 3.32, 3.9, 4.52, 5.12, 5.55];
 %Modualtion type at each threshold
 MOD_thresholds = [4,4,4,4,4,16,16,16,64,64,64,64,64,64];
+
+%fixme: since a lot of the code below just used the BLER01 database and
+%names it explicitely, let's just copy to it instead rather than renameing
+%everything
+SINR_thresholds_BLER01 = SINR_thresholds_beta - 10;
+MOD_thresholds = MOD_thresholds_beta;
+CR_thresholds = CR_thresholds_beta;
+
 
 %arrays storing index into MCS table, coding rate, modulation goes here
 CR_at_waypoints_BLER01 = zeros(1, length(interpolated_longs));
@@ -377,6 +450,10 @@ MOD_at_waypoints_BLER0001 = zeros(1, length(interpolated_longs));
 
 EFF_at_waypoints_BLER01 = zeros(1, length(interpolated_longs));
 EFF_at_waypoints_BLER0001 = zeros(1, length(interpolated_longs));
+
+
+
+
 
 for k = 1:1:length(SINR_at_waypoint)
     sinr_wp = SINR_at_waypoint(k);
@@ -402,21 +479,21 @@ for k = 1:1:length(SINR_at_waypoint)
     if idx_BLER01 == 0
         MOD_at_waypoints_BLER01(k) = 0;
         CR_at_waypoints_BLER01(k) = 0;
-        EFF_at_waypoints_BLER01(k) = 0;
+        %EFF_at_waypoints_BLER01(k) = 0;
     else
         %now find actual coding rates, modualtions and symbol rates for each
         MOD_at_waypoints_BLER01(k) = MOD_thresholds(idx_BLER01);
         CR_at_waypoints_BLER01(k) = CR_thresholds(idx_BLER01);
-        EFF_at_waypoints_BLER01(k) = EFF_thresholds(idx_BLER01);
+        %EFF_at_waypoints_BLER01(k) = EFF_thresholds(idx_BLER01);
     end
     if idx_BLER0001 == 0
         MOD_at_waypoints_BLER0001(k) = 0;
         CR_at_waypoints_BLER0001(k) = 0;
-        EFF_at_waypoints_BLER0001(k) = 0;
+        %EFF_at_waypoints_BLER0001(k) = 0;
     else
         MOD_at_waypoints_BLER0001(k) = MOD_thresholds(idx_BLER0001);
         CR_at_waypoints_BLER0001(k) = CR_thresholds(idx_BLER0001);
-        EFF_at_waypoints_BLER0001(k) = EFF_thresholds(idx_BLER0001);
+        %EFF_at_waypoints_BLER0001(k) = EFF_thresholds(idx_BLER0001);
     end
 
 end
@@ -465,11 +542,17 @@ QAM64_cd_ref = qammod(data,64); %modulated symbol using 64QAM
 md = 5 / max(abs(QAM64_cd_ref)) %normalize radius of constellation here
 QAM64_cd_ref = QAM64_cd_ref * md;
 
-pfo = comm.PhaseFrequencyOffset(PhaseOffset=10, FrequencyOffset=1000);
-QAM_shifted = pfo(QAM64_cd_ref)
+pfo = comm.PhaseFrequencyOffset(PhaseOffset=5, FrequencyOffset=0);
+QAM_shifted = pfo(QAM64_cd_ref);
 
 %scatterplot(QAM64_cd_ref)
 %scatterplot(QAM_shifted)
+
+ref_re = real(QAM64_cd_ref);
+ref_im = imag(QAM64_cd_ref);
+
+s_re = real(QAM_shifted);
+s_im = imag(QAM_shifted);
 
 
 %% modulate baseband signal and plot  both original and phase+freq offset constellation diagram
@@ -508,13 +591,16 @@ for i = 1:1:numel(interpolated_longs)
     if mod01 == 0
         %error/no connect case
         continue
-    elseif mod01 == 4
+    elseif mod01 == 4 %QPSK
         data = (0:mod01-1)';
         unshifted_mod = pskmod(data,mod01);
-    elseif mod01 == 16
+    elseif mod01 == 16 %16QAM
         data = (0:mod01-1)';
         unshifted_mod = qammod(data,mod01);
-    elseif mod01 == 64
+    elseif mod01 == 64 %64QAM
+        data = (0:mod01-1)';
+        unshifted_mod = qammod(data,mod01);
+    elseif mod01 == 256 %256QAM
         data = (0:mod01-1)';
         unshifted_mod = qammod(data,mod01);
      
@@ -543,8 +629,8 @@ for i = 1:1:numel(interpolated_longs)
     
         %SER and BER computations for static case
         prob = prob_overreach(d_mins, noise_interference_ref); %probability that any symbol is mistaken for another 
-        unshifed_pairwise_prob(i)= prob;
-        BER_static_prob(i) = unshifed_pairwise_prob(i) / log2(mod01); %assumption: snr is sufficiently high
+        unshifed_pairwise_prob(i,:)= prob;
+        BER_static_prob(i,:) = unshifed_pairwise_prob(i) / log2(mod01); %assumption: snr is sufficiently high
 
         
         %SER AND BER for various moving cases
@@ -585,7 +671,7 @@ for i = 1:1:numel(interpolated_longs)
         BER_shift_freq_prob(i,:) = 1; %BER freq + phase shift
         shifted_pairwise_error_prob_freq(i,:) = 1; %SER for freq + phase shift computation
         shifted_pairwise_error_prob(i,:) = 1; %SER for phase shift computation
-        unshifed_pairwise_prob(i) = 1; %SER for static computation
+        unshifed_pairwise_prob(i,:) = 1; %SER for static computation
     end
     
 end    
@@ -612,61 +698,47 @@ interference_power = ambient_interference; %dbm
 NI = sum_dbm_power(interference_power, rxNoisePower); %dbm
 
 signalPower_at_waypoints = SINR_at_waypoint + NI;
-bits_per_symbol = zeros(1, numel(interpolated_longs));
+
 datarates_static = zeros(1, numel(interpolated_longs));
 datarates_moving = zeros(1, numel(interpolated_longs));
 datarates_moving_freq = zeros(1, numel(interpolated_longs));
+CR = zeros(subcarrier_channel_count, numel(interpolated_longs)).';
+bits_per_symbol = zeros(subcarrier_channel_count, numel(interpolated_longs)).';
 
 %effective datarates after applying coding rate
-datarates_eff_static = zeros(1, numel(interpolated_longs));
-datarates_eff_moving = zeros(1, numel(interpolated_longs));
-datarates_eff_moving_freq = zeros(1, numel(interpolated_longs));
-
-for k = 1:1:numel(interpolated_longs) 
-    mod_type = MOD_at_waypoints_BLER01(k);
-    if mod_type ~= 0
-        bits_per_symbol(k) = log2(mod_type);
-        datarates_static(k) = symbol_rate * bits_per_symbol(k) * (1 - unshifed_pairwise_prob(k))*subcarrier_channel_count; %data rate = symbol rate * bits per symbol * SER
-        datarates_moving(k) = symbol_rate * bits_per_symbol(k) * (1 - moving_error_rate(k) ) *subcarrier_channel_count;
-        datarates_moving_freq(k) = symbol_rate * bits_per_symbol(k) * (1 - moving_error_rate_freq(k) ) *subcarrier_channel_count;
-    else
-        bits_per_symbol(k) = 0; %disconnected case
-        datarates_static(k) = 0;
-        datarates_moving(k) = 0;
-    end
-    
-end
-
-%now compute effective coding rate via coding rate
+datarates_eff_static = zeros(subcarrier_channel_count, numel(interpolated_longs));
+datarates_eff_moving = zeros(subcarrier_channel_count, numel(interpolated_longs));
+datarates_eff_moving_freq = zeros(subcarrier_channel_count, numel(interpolated_longs));
 
 for k = 1:1:numel(interpolated_longs)
     mod_type = MOD_at_waypoints_BLER01(k);
+    coding_rate = CR_at_waypoints_BLER01(k);
     if mod_type ~= 0
-        coding_rate = CR_at_waypoints_BLER01(k);
-        datarates_eff_static(k) = datarates_static(k) * coding_rate;
-        datarates_eff_moving(k) = datarates_moving(k) * coding_rate;
-        datarates_eff_moving_freq(k) = datarates_moving_freq(k) * coding_rate;
-    else    
-        datarates_eff_static(k) = 0;
-        datarates_eff_moving(k) = 0;
-        datarates_eff_moving_freq(k) = 0;
-    
-
-    
+        bits_per_symbol(k,:) = log2(mod_type);
+        CR(k,:) = coding_rate;
+    elseif mod_type == 0
+        bits_per_symbol(k,:) = 0;
+        CR(k,:) = 0;
     end
 end
+%%
+datarates_eff_static = bits_per_symbol.* symbol_rate.* (1 - BER_static_prob) .* CR;
+datarates_eff_phase = bits_per_symbol.* symbol_rate.* (1 - BER_shift_prob).* CR;
+datarates_eff_freq = bits_per_symbol.* symbol_rate.* (1 - BER_shift_freq_prob).* CR;
 
-%save("run3.mat")
+
+%%
+
 
 %
-%difference between static an dmoving
-delta_static_phase = datarates_eff_static - datarates_eff_moving;
+%difference between static and moving datatrates
+delta_static_phase = datarates_eff_static - datarates_eff_phase;
 
 %total areas of datarate * distance (not time dependent -> higher = better
 %signal) -> area-under-curve
-area_datarate_static = subdivide_length * sum(datarates_eff_static) %should always be highest
-area_datarate_phase = subdivide_length * sum(datarates_eff_moving)
-area_delta = subdivide_length * sum(delta_static_phase)
+area_datarate_static = subdivide_length * sum(datarates_eff_static, "all") %should always be highest
+area_datarate_phase = subdivide_length * sum(datarates_eff_phase, "all")
+area_delta = subdivide_length * sum(delta_static_phase, "all")
 %area_datarate_phase_freq = subdivide_length * sum(datarates_eff_moving_freq) %dont use
 
 %fraction of total area-under-curve vs reference (static) area-under-curve)
@@ -676,10 +748,31 @@ delta_frac = area_delta/area_datarate_static
 
 save(name_of_saved_filestate);
 
-%% plots
+
+%%
+numel(datarates_eff_static)
+
+datarates_static_flat = reshape(datarates_eff_static.',1,[]);
+datarates_phase_flat = reshape(datarates_eff_phase.',1,[]);
+
+dr = [datarates_static_flat; datarates_phase_flat].';
+% histogram(datarates_eff_static, 10)
+% histogram(datarates_eff_phase, 10)
+hist(dr, 10)
+legend(["Non-shifted/static case", "Phase shifted/moving case"])
+xlabel("Per-channel effective datarate (bits/s)")
+ylabel("Frequency over trajectory")
+titlestr = sprintf(['Distribution of per-channel datarates (fc = %.1f GHz, bw = %.1f MHz). ' ...
+    '\n User velocity %.0f km/h, TX power %.1f dBm, ambiant interference. %.1f dBm \n ' ...
+    'Ideal-to-moving data transfer ratio %.3f %% '],(fq/(10^9)), (rx_bw / (10^6)) ,(moving_speed * 3.6),tx_power,ambient_interference,(1-delta_frac)*100 )
+title(titlestr)
 
 
-plot(d_run,datarates_eff_static, d_run, datarates_eff_moving);%, d_run, datarates_eff_moving_freq )
-%plot(d_run,datarates_eff_static);%,d_run, delta_static_phase)
-%plot(d_run,datarates_eff_static, d_run, datarates_eff_moving)
-%plot(d_run, datarates_eff_static)
+
+
+
+
+
+
+
+
